@@ -7,6 +7,4 @@ typechain-types
 
 # Hardhat files
 cache
-artifacts
-constructor_args.js
 hardhat.config.js
