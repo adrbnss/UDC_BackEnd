@@ -13,6 +13,7 @@ contract Betting is Ownable, AccessControl {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     IERC20 public token;
     uint256 public gameId = 0;
+    uint256 public timeToBet = 10 minutes;
     bool public gameStarted = false;
     mapping(uint256 => Game) public games;
 
@@ -36,9 +37,22 @@ contract Betting is Ownable, AccessControl {
 
     constructor(address _token, address[] memory admins) {
         token = IERC20(_token);
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         for (uint256 i = 0; i < admins.length; i++) {
             _setupRole(ADMIN_ROLE, admins[i]);
         }
+    }
+
+    /**
+     * @dev Allows admins to set the time to bet.
+     * @param _timeToBet The time to bet.
+     */
+    function setTimeToBet(uint256 _timeToBet) external {
+        require(
+            hasRole(ADMIN_ROLE, msg.sender) || msg.sender == owner(),
+            "You are not an admin"
+        );
+        timeToBet = _timeToBet;
     }
 
     /**
@@ -54,13 +68,13 @@ contract Betting is Ownable, AccessControl {
         gameId++;
         games[gameId].id = gameId;
         games[gameId].startTime = block.timestamp;
-        games[gameId].bettingEndTime = block.timestamp + 10 minutes;
+        games[gameId].bettingEndTime = block.timestamp + timeToBet;
         games[gameId].totalBetOnFighter1 = 0;
         games[gameId].totalBetOnFighter2 = 0;
         games[gameId].totalBet = 0;
         games[gameId].winner = 0;
 
-        emit GameStarted(gameId, block.timestamp, block.timestamp + 10 minutes);
+        emit GameStarted(gameId, block.timestamp, block.timestamp + timeToBet);
     }
 
     /**
@@ -81,7 +95,7 @@ contract Betting is Ownable, AccessControl {
      * @param _bet The amount bet.
      * @param fighter The fighter to bet on.
      */
-    function bet(uint256 _bet, uint256 fighter) external payable {
+    function bet(uint256 _bet, uint256 fighter) external {
         require(gameStarted, "Game has not started");
         require(
             block.timestamp < games[gameId].bettingEndTime,
@@ -100,17 +114,20 @@ contract Betting is Ownable, AccessControl {
         bool success = token.transferFrom(msg.sender, address(this), _bet);
         require(success, "Token transfer failed");
 
-        games[gameId].totalBet += _bet;
+        // Convert _bet to smallest unit (wei) of the token
+        uint256 betAmountWei = _bet * (10 ** 10);
+
+        games[gameId].totalBet += betAmountWei;
         games[gameId].isBettor[msg.sender] = true;
 
         if (fighter == 1) {
-            games[gameId].betOnFighter1[msg.sender] = _bet;
+            games[gameId].betOnFighter1[msg.sender] = betAmountWei;
             games[gameId].numberOfBetOnFighter1.push(msg.sender);
-            games[gameId].totalBetOnFighter1 += _bet;
+            games[gameId].totalBetOnFighter1 += betAmountWei;
         } else {
-            games[gameId].betOnFighter2[msg.sender] = _bet;
+            games[gameId].betOnFighter2[msg.sender] = betAmountWei;
             games[gameId].numberOfBetOnFighter2.push(msg.sender);
-            games[gameId].totalBetOnFighter2 += _bet;
+            games[gameId].totalBetOnFighter2 += betAmountWei;
         }
     }
 
@@ -134,11 +151,10 @@ contract Betting is Ownable, AccessControl {
             ) {
                 address bettor = games[gameId].numberOfBetOnFighter1[i];
                 uint256 amount = games[gameId].betOnFighter1[bettor];
-                bool success = token.transfer(
-                    bettor,
-                    (amount / games[gameId].totalBetOnFighter1) *
-                        (games[gameId].totalBet)
-                );
+                uint256 winnings = (amount * games[gameId].totalBet) /
+                    games[gameId].totalBetOnFighter1;
+                winnings /= 10 ** 10; // Convert back to 8-decimal token
+                bool success = token.transfer(bettor, winnings);
                 require(success, "Token transfer failed");
             }
         } else {
@@ -149,11 +165,10 @@ contract Betting is Ownable, AccessControl {
             ) {
                 address bettor = games[gameId].numberOfBetOnFighter2[i];
                 uint256 amount = games[gameId].betOnFighter2[bettor];
-                bool success = token.transfer(
-                    bettor,
-                    (amount / games[gameId].totalBetOnFighter2) *
-                        games[gameId].totalBet
-                );
+                uint256 winnings = (amount * games[gameId].totalBet) /
+                    games[gameId].totalBetOnFighter2;
+                winnings /= 10 ** 10; // Convert back to 8-decimal token
+                bool success = token.transfer(bettor, winnings);
                 require(success, "Token transfer failed");
             }
         }
@@ -190,6 +205,16 @@ contract Betting is Ownable, AccessControl {
      */
     function getLastGameId() external view returns (uint256) {
         return gameId;
+    }
+
+    /**
+     * @dev Returns if the user is a bettor in this game.
+     * @param _bettor The bettor address.
+     */
+    function isBettor(
+        address _bettor
+    ) external view returns (bool) {
+        return games[gameId].isBettor[_bettor];
     }
 
     /**
